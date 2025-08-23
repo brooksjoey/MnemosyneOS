@@ -1,0 +1,18 @@
+deploy/mnemo-beat.service
+[Unit]
+Description=Mnemosyne Celery Beat
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=mnemo
+Group=mnemo
+EnvironmentFile=/etc/mnemo/env
+WorkingDirectory=/opt/mnemo
+ExecStart=/opt/mnemo/venv/bin/celery -A src.jobs.celery_app:app beat --loglevel=INFO
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

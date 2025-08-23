@@ -1,0 +1,22 @@
+deploy/mnemosyneos.service
+[Unit]
+Description=Mnemosyne API (Gunicorn/FastAPI)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=notify
+User=mnemo
+Group=mnemo
+EnvironmentFile=/etc/mnemo/env
+WorkingDirectory=/opt/mnemo
+ExecStart=/opt/mnemo/venv/bin/gunicorn --factory --workers=%{%nproc%} \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 src.main:create_app
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
