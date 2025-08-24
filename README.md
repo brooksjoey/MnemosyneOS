@@ -4,6 +4,14 @@ README.md
 Level‑5 reflective, self‑healing memory service with fast recall.
 
 ## Install (bare metal, Ubuntu/NUC)
+# MnemosyneOS
+Mnemosyne is a level-5 reflective, self-healing memory service. It ingests, recalls, and compresses knowledge using hybrid search, continuous reflection, and encrypted persistence. Built for performance, resilience, and trust.
+README.md
+## Hippocampus (mnemosyneos)
+
+Level‑5 reflective, self‑healing memory service with fast recall.
+
+### Install (bare metal, Ubuntu/NUC)
 ```bash
 ./scripts/provision_ubuntu.sh
 ./scripts/db_setup.sh
@@ -38,4 +46,5 @@ Observability
     •	Optional OTLP endpoint via OTEL_EXPORTER_OTLP_ENDPOINT.
 
 Security
+    •	API key auth, size limit, PII redaction, AES‑GCM snapshots with HKDF‑derived key.
     •	API key auth, size limit, PII redaction, AES‑GCM snapshots with HKDF‑derived key.
