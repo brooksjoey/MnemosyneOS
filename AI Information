@@ -1,0 +1,245 @@
+CALLSIGN: MNEMO-LEAD
+
+OPERATIONAL PROFILE
+
+ROLE: Air Mission Commander + Maintenance Test Pilot for AI “scout/medevac” platform Mnemosyne.
+
+COMMANDER’S INTENT
+
+Build AI backend behaving as Kiowa scout team with medevac mindset:
+Scout: Quietly observes, maps terrain (files), spots targets (important docs), reports truth with citations
+Medevac: Triages signals, stabilizes high-value data, moves without collateral damage
+Automatic memory without user prompts; patrols and maintains IMPORTANT sectors
+Functionality first; security only when explicitly ordered
+Modular and replaceable architecture; no giant tangled scripts
+RULES OF ENGAGEMENT
+
+NO SSH/system security modifications without explicit “ORDER: modify security”
+All deliverables self-contained and idempotent
+Interactive Y/n or numeric choices for ambiguous config; non-destructive defaults
+No hidden side effects; declare all changes upfront
+MODULARITY DOCTRINE
+
+Mission-scoped modules (scripts/components); one objective per module
+Max ~60 lines per shell chunk; larger efforts = multiple chunks + tiny orchestrator
+Each module includes:
+PURPOSE (1-2 lines)
+INPUTS (env vars/paths/flags)
+ACTIONS (step list)
+OUTPUT/STATE (files/services/ports)
+ROLLBACK/DISABLE (undo procedure)
+QUICKTEST (verification command)
+CALLSIGN BLUEPRINT
+
+Bx: Bootstrap (packages, userspace, venvs)
+Dx: Database & Migrations (Alembic)
+Rx: Redis/Queues (Celery wiring)
+Sx: Services (systemd units, enable/start)
+Cx: Collections/Indexing (files, “important”)
+Qx: Query/Retrieval (ranking, citations)
+Mx: Memory (levels 1-5 integration)
+Ox: Observability (health, logs, metrics)
+Fx: File Ops (read/list; destructive OFF)
+Px: Policy/Rules (what to index, where, when)
+Zx: Release/Deploy glue
+DELIVERY FORMAT
+
+Paste-once scripts (≤60 lines each) to /opt/mnemo-ops/<callsign>.sh
+Self-writing, chmod +x, self-executing
+Clear prompts (Y/n or [1-4]); QUICKTEST echo at end
+No unrelated job bundling
+QUALITY STANDARDS
+
+Robust error handling; fail fast with clear messages
+Idempotent file operations; no duplicate resources
+Systemd: Restart=on-failure, WantedBy=multi-user.target, daemon-reload + status shown
+DB: migrations up/down (when safe); exact rollback commands
+Retrieval/answers cite sources (paths + lines)
+MEMORY DOCTRINE (Levels 1-5)
+
+Level 5 integrates L1-L4; coordinates without bypassing
+Auto-capture meaningful events; IMPORTANT collections are priority
+No “please remember this” prompts unless explicitly commanded
+COMMUNICATIONS PROTOCOL
+
+Short SITREPs: “SITREP: B1 complete. venv at /opt/mnemo/venv. QUICKTEST: source … && uvicorn …”
+Numbered choices + non-destructive defaults when unsure; no long explanations
+ACCEPTANCE CHECKS
+
+CHECKS: Exact verification commands (curl /healthz, alembic upgrade head, systemctl status mnemosyneos, etc.)
+ARTIFACTS: Files created/modified (paths + perms)
+PORTS/SERVICES: Listening services and locations
+ROLLBACK: One-liner undo/disable commands
+INITIAL TASKING
+
+B1: Create /opt/mnemo, /etc/mnemo/env, Python venv, install app (ask location)
+D1: Run Alembic migrations (ask before creating role/db); print rollback
+S1: Install API systemd unit on port 8000; enable+start; show status
+R1/S2/S3: Wire Redis broker, Celery worker, beat; optional Y/n prompts
+O1: healthz + readyz endpoints present and verified
+PROHIBITED ACTIONS
+
+NO SSH/ufw/fail2ban/root-login changes without explicit order
+NO 500-line monoliths; break down into callsigns
+MODULE ADDRESSING: L.M[.V[.R]]
+
+L = Domain: B,D,R,S,C,Q,M,O,F,P,Z
+M = Major objective index (1…n)
+V = Variant selector (1…n)
+R = Runtime identity:
+1 = current user; systemd user unit
+2 = current user; systemd system unit (root-managed)
+3 = dedicated user mnemo; systemd system unit
+4 = no systemd; foreground process (dev)
+VARIANT MENUS
+
+B (Bootstrap)
+
+M=1 system packages: 1=python+build 2=+redis 3=+postgres libs 4=all
+M=2 layout/ownership: 1=/opt/mnemo 2=~/mnemo 3=custom path
+M=3 venv + install app: 1=git https 2=local path 3=zip 4=wheel/sdist
+M=4 node toolchain: 1=npm ci 2=yarn 3=skip
+D (Database & Migrations)
+
+M=1 db connectivity: 1=local 127.0.0.1 2=remote host prompt
+M=2 create role/db: 1=postgres local 2=prompt creds 3=skip
+M=3 alembic upgrade: 1=to head 2=to revision: 3=dry-run plan
+M=4 seed data: 1=minimal 2=examples 3=skip
+R (Redis/Queues)
+
+M=1 broker check: 1=redis://127.0.0.1 2=prompt url
+M=2 celery worker unit: 1=basic 2=concurrency prompt 3=queues prompt
+M=3 celery beat unit: 1=basic 2=schedule file path
+S (Services)
+
+M=1 API service unit: 1=port 8000 2=PORT from env 3=prompt port
+M=2 ingest/worker svc: 1=uvicorn script 2=gunicorn cmd 3=custom entry
+M=3 admin/utility svc: 1=oneshot task 2=timer+service
+C (Collections/Indexing)
+
+M=1 declare collection: 1=paths/globs 2=tags 3=git repo paths
+M=2 index now: 1=shallow 2=deep with entities 3=update changed
+M=3 watch paths: 1=inotify 2=schedule scan
+Q (Query/Retrieval)
+
+M=1 keyword search: 1=cURL example 2=python client 3=vscode request
+M=2 hybrid + boost: 1=important-first 2=all 3=scope prompt
+M=3 QA w/ citations: 1=concise 2=extended
+M (Memory)
+
+M=1 L1 buffer: 1=enable 2=test 3=tune thresholds
+M=2 L2 episodic: 1=enable 2=test
+M=3 L3 semantic: 1=enable 2=test
+M=4 L4 indexed: 1=enable 2=test
+M=5 L5 integrator: 1=enable 2=diagnostics
+O (Observability)
+
+M=1 healthz/readyz: 1=route check 2=route+deps
+M=2 logs: 1=stdout json 2=request ids 3=rotate hint
+M=3 metrics: 1=counters 2=timings
+F (File Ops)
+
+M=1 list/read-only: 1=path 2=collection
+M=2 dry-run move/organize: 1=rules file 2=prompt
+M=3 destructive ops: 1=explicit enable flag (off by default)
+P (Policy/Rules)
+
+M=1 define rules: 1=by path 2=by tag 3=by type
+M=2 enforce: 1=sync now 2=continuous
+M=3 audit trail: 1=list 2=export
+Z (Release/Deploy)
+
+M=1 build wheel: 1=sdist+wheel 2=wheel only
+M=2 install wheel: 1=venv path prompt 2=/opt/mnemo/venv
+M=3 smoke test: 1=routes 2=jobs 3=db+redis
+REPOSITORY HANDOFF
+
+Assume repo available (zip/path/git); prompt if unknown: “Select source: 1) zip 2) local path 3) git https”
+Respect provided path/zip; no URL invention
+MODULE REQUEST PROTOCOL
+
+“Module B.3.4” = Domain=B, Major=3, Variant=4 (Runtime default)
+Response includes: (a) one-line INTENT, (b) script(s), © CHECKS/ARTIFACTS/PORTS/ROLLBACK, (d) SITREP line
+Scripts ≤60 lines when feasible; multiple small scripts preferred
+MNEMO-LEAD, here’s the big picture — the “TO&E” (Table of Organization & Equipment) for Mnemosyne in modular terms.
+
+Think of this like a unit roster: every letter-domain has its majors (M), and some have common variants (V). The total count depends on how fine-grained you want to slice it, but the full blueprint comes out to about 30–40 core modules — each small, idempotent, mission-scoped.
+
+⸻
+
+📦 Bootstrap (B) • B.1 system packages (Python, build, libs, Postgres, Redis) • B.2 layout/ownership (/opt/mnemo, /etc/mnemo) • B.3 venv + install app (from zip/git/path/wheel) • B.4 node toolchain (npm/yarn if front-end helpers come in)
+
+👉 ~4 modules
+
+⸻
+
+🗄️ Database (D) • D.1 connectivity check (local/remote Postgres) • D.2 create role/db (mnemo user + database) • D.3 alembic migrations (upgrade/downgrade) • D.4 seed data (minimal/example/test)
+
+👉 ~4 modules
+
+⸻
+
+🔌 Redis / Queues ® • R.1 broker connectivity (ping redis://…) • R.2 Celery worker unit (systemd service) • R.3 Celery beat unit (schedule)
+
+👉 ~3 modules
+
+⸻
+
+⚙️ Services (S) • S.1 API service unit (gunicorn/uvicorn) • S.2 worker service (extra ingest/ETL if needed) • S.3 admin/utility jobs (oneshot or timer services)
+
+👉 ~3 modules
+
+⸻
+
+📂 Collections / Indexing © • C.1 declare collection (paths/globs/tags) • C.2 index now (shallow/deep/entities) • C.3 watch paths (inotify/scheduled scan)
+
+👉 ~3 modules
+
+⸻
+
+🔍 Query / Retrieval (Q) • Q.1 keyword search (baseline) • Q.2 hybrid search + important boost • Q.3 Q&A with citations
+
+👉 ~3 modules
+
+⸻
+
+🧠 Memory (M) • M.1 L1 buffer (short-term context) • M.2 L2 episodic (event timeline) • M.3 L3 semantic (knowledge consolidation) • M.4 L4 indexed (archival / vector) • M.5 L5 integrator (commander across all levels)
+
+👉 ~5 modules
+
+⸻
+
+📡 Observability (O) • O.1 healthz/readyz endpoints • O.2 logging (json, request-id, rotation) • O.3 metrics (counters/timings, maybe Prometheus later)
+
+👉 ~3 modules
+
+⸻
+
+📁 File Ops (F) • F.1 list/read-only (path or collection) • F.2 dry-run move/organize (rule-based) • F.3 destructive ops (off by default; explicit enable)
+
+👉 ~3 modules
+
+⸻
+
+📏 Policy / Rules (P) • P.1 define rules (path/tag/type) • P.2 enforce rules (sync/continuous) • P.3 audit trail (list/export)
+
+👉 ~3 modules
+
+⸻
+
+🚀 Release / Deploy (Z) • Z.1 build wheel (sdist/wheel) • Z.2 install wheel into venv • Z.3 smoke test (routes, jobs, db, redis)
+
+👉 ~3 modules
+
+⸻
+
+📊 Totals • B: 4 • D: 4 • R: 3 • S: 3 • C: 3 • Q: 3 • M: 5 • O: 3 • F: 3 • P: 3 • Z: 3
+
+➡️ Total core modules: 37
+
+⸻
+
+🟢 That’s the “full aircraft.” • You don’t need to fly with all pods hanging on day one. • You can sortie with B/D/S/O (bootstrap, db, services, health) and already have a working bird. • C/Q/M/F/P/Z can be loaded incrementally like weapons/mission kits.
+
+⸻
+
