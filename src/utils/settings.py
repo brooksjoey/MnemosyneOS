@@ -1,11 +1,19 @@
+<<<<<<< HEAD
 from pydantic import Field, validator, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Optional
 import os
+=======
+src/utils/settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+from typing import List, Optional
+>>>>>>> bbeef0f (Initial commit with all project files)
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+<<<<<<< HEAD
     # --- API Security ---
     api_keys: List[str] = Field(default=[], alias="API_KEYS") # CHANGE: Default to empty list!
     
@@ -30,10 +38,19 @@ class Settings(BaseSettings):
     redis_url: str = Field(alias="REDIS_URL")
 
     # --- LLM --- 
+=======
+    api_keys: List[str] = Field(default=["dev-key-123"], alias="API_KEYS")
+    max_request_bytes: int = Field(default=1_048_576, alias="MAX_REQUEST_BYTES")
+
+    database_url: str = Field(alias="DATABASE_URL")
+    redis_url: str = Field(alias="REDIS_URL")
+
+>>>>>>> bbeef0f (Initial commit with all project files)
     llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
     openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
     anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
     embed_model: str = Field(default="text-embedding-3-small", alias="EMBED_MODEL")
+<<<<<<< HEAD
     # NEW: Add a setting for embedding dimensions
     embed_dim: int = Field(default=1536, alias="EMBED_DIM") 
 
@@ -58,11 +75,17 @@ class Settings(BaseSettings):
     backup_dir: str = Field(default="/var/lib/mnemo/snapshots", alias="BACKUP_DIR")
     backup_key_file: str = Field(default="/etc/mnemo/backup.key", alias="BACKUP_KEY_FILE")
     
+=======
+
+    backup_backend: str = Field(default="local", alias="BACKUP_BACKEND")
+    backup_dir: str = Field(default="/var/lib/mnemo/snapshots", alias="BACKUP_DIR")
+>>>>>>> bbeef0f (Initial commit with all project files)
     s3_bucket: Optional[str] = Field(default=None, alias="S3_BUCKET")
     s3_prefix: Optional[str] = Field(default=None, alias="S3_PREFIX")
     aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
     aws_secret_access_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
     aws_region: Optional[str] = Field(default=None, alias="AWS_REGION")
+<<<<<<< HEAD
 
     @field_validator('backup_backend')
     @classmethod
@@ -79,10 +102,17 @@ class Settings(BaseSettings):
                     # This is just a warning; boto3 will handle auth failure at runtime.
                     print("Warning: No explicit AWS credentials found. Relying on IAM roles or environment.")
         return v
+=======
+    backup_key_file: str = Field(default="/etc/mnemo/backup.key", alias="BACKUP_KEY_FILE")
+>>>>>>> bbeef0f (Initial commit with all project files)
 
     auto_migrate: int = Field(default=1, alias="AUTO_MIGRATE")
 
     # Observability
     otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
 
+<<<<<<< HEAD
 settings = Settings()
+=======
+settings = Settings()
+>>>>>>> bbeef0f (Initial commit with all project files)
