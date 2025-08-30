@@ -1,0 +1,211 @@
+THE PROGRESSION FILE
+
+# MnemosyneOS – Progression (Canonical)
+**Version:** 0.3.1  
+**Datestamp (UTC):** 2025-08-29T21:30Z  
+**Maintainer:** MNEMO-LEAD  
+
+---
+
+## Table of Contents
+1. Operational Profile
+2. Addressing & Variant Menus
+3. Status Legend & Scoreboard
+4. Module Inventory Tree
+5. Canonical Module Cards
+6. Environment & Secrets (Sanitized)
+7. Acceptance Checks (Global)
+8. SITREP: Next 5 Actions
+9. Versioning & Governance
+
+---
+
+## 1. Operational Profile
+
+**COMMANDER’S INTENT**  
+MnemosyneOS is an AI-agnostic memory operating system. It observes, organizes, and recalls data signals while remaining modular, idempotent, and user-controlled.  
+
+**RULES OF ENGAGEMENT (ROE)**  
+- No SSH/security modifications unless explicitly ordered.  
+- All modules are self-contained paste-once scripts.  
+- No hidden side-effects. Explicit declaration of touched files, services, and ports.  
+
+**MODULARITY DOCTRINE**  
+- Small mission-scoped modules, ≤ ~60 lines when possible.  
+- One objective per module; orchestrators only if necessary.  
+
+**DELIVERY FORMAT**  
+- Scripts self-install under `/opt/mnemo-ops/<callsign>.sh`.  
+- Each module outputs: PURPOSE, INPUTS, ACTIONS, OUTPUTS, ROLLBACK, QUICKTEST.  
+
+**QUALITY STANDARDS**  
+- Robust error handling; fail fast.  
+- Idempotent (no duplication on reruns).  
+- Predictable, reproducible state.  
+
+**MEMORY DOCTRINE (L1–L5)**  
+- L1 buffer → L2 episodic → L3 semantic → L4 indexed → L5 integrator.  
+- L5 coordinates, not bypasses.  
+
+**COMMS (SITREP Style)**  
+- Modules report SITREP on completion.  
+
+**ACCEPTANCE CHECKS**  
+- Every module outputs quick commands for verification.  
+
+**PROHIBITED ACTIONS**  
+- No monoliths.  
+- No background security edits.  
+- No destructive file operations unless explicitly enabled.  
+
+---
+
+## 2. Addressing & Variant Menus
+
+**Format:** `L.M[.V[.R]]`  
+- **Domains (L):** B,D,R,S,C,Q,M,O,F,P,Z  
+- **Runtime (R):**  
+  1 = user unit  
+  2 = system (current user)  
+  3 = mnemo system user (preferred)  
+  4 = no systemd/dev  
+
+**Variant Menus:**  
+
+- **B (Bootstrap)**  
+  - B.1 system packages: V1=python+build, V2=+redis, V3=+postgres libs, V4=all  
+  - B.2 layout/ownership: V1=/opt/mnemo, V2=~/mnemo, V3=custom  
+  - B.3 venv+install: V1=git, V2=local, V3=zip, V4=wheel/sdist  
+  - B.4 node toolchain: V1=npm ci, V2=yarn, V3=skip  
+
+- **D (Database)**  
+  - D.1 connectivity: V1=local, V2=remote prompt  
+  - D.2 role/db: V1=local postgres, V2=prompt creds, V3=skip  
+  - D.3 alembic: V1=head, V2=rev-id, V3=dry-run  
+  - D.4 seed: V1=minimal, V2=examples, V3=skip  
+
+- **R (Redis/Queues)**  
+  - R.1 broker: V1=local redis://127.0.0.1, V2=prompt  
+  - R.2 worker: V1=basic, V2=concurrency, V3=queues  
+  - R.3 beat: V1=basic, V2=schedule path  
+
+- **S (Services)**  
+  - S.1 API: V1=8000, V2=PORT from env, V3=prompt  
+  - S.2 worker svc: V1=uvicorn, V2=gunicorn, V3=custom  
+  - S.3 admin/timer: V1=oneshot, V2=timer  
+
+- **C (Collections)**  
+  - C.1 declare: V1=paths, V2=tags, V3=git paths  
+  - C.2 index: V1=shallow, V2=deep/entities, V3=update  
+  - C.3 watch: V1=inotify, V2=scheduled  
+
+- **Q (Query)**  
+  - Q.1 keyword: V1=cURL, V2=python client, V3=vscode  
+  - Q.2 hybrid: V1=important-first, V2=all, V3=prompt scope  
+  - Q.3 QA: V1=concise, V2=extended  
+
+- **M (Memory)**  
+  - M.1 L1 buffer: V1=enable, V2=test, V3=tune  
+  - M.2 L2 episodic: V1=enable, V2=test  
+  - M.3 L3 semantic: V1=enable, V2=test  
+  - M.4 L4 indexed: V1=enable, V2=test  
+  - M.5 L5 integrator: V1=enable, V2=diagnostics  
+
+- **O (Observability)**  
+  - O.1 healthz: V1=route, V2=route+deps  
+  - O.2 logs: V1=stdout json, V2=request ids, V3=rotate  
+  - O.3 metrics: V1=counters, V2=timings  
+
+- **F (File Ops)**  
+  - F.1 list: V1=path, V2=collection  
+  - F.2 dry-run organize: V1=rules file, V2=prompt  
+  - F.3 destructive: V1=explicit enable flag (default OFF)  
+
+- **P (Policy)**  
+  - P.1 define: V1=path, V2=tag, V3=type  
+  - P.2 enforce: V1=sync, V2=continuous  
+  - P.3 audit: V1=list, V2=export  
+
+- **Z (Release)**  
+  - Z.1 build: V1=sdist+wheel, V2=wheel only  
+  - Z.2 install: V1=prompt path, V2=/opt/mnemo/venv  
+  - Z.3 smoke: V1=routes, V2=jobs, V3=db+redis  
+
+---
+
+## 3. Status Legend & Scoreboard
+
+**Legend:**  
+✅ = complete  
+⚠ = partial / needs-verify  
+⬜ = pending  
+
+| Domain | Complete | Partial | Pending |
+|--------|----------|---------|---------|
+| B      | 4        | 1       | 0       |
+| D      | 2        | 1       | 1       |
+| R      | 1        | 1       | 1       |
+| S      | 1        | 1       | 1       |
+| C      | 0        | 2       | 1       |
+| Q      | 0        | 2       | 1       |
+| M      | 0        | 3       | 2       |
+| O      | 1        | 1       | 1       |
+| F      | 0        | 1       | 2       |
+| P      | 0        | 2       | 1       |
+| Z      | 1        | 1       | 1       |
+
+**Overall Grade:** ⚠ Mixed readiness — bootstrap solid, core services partial, memory modules need verification.  
+
+---
+
+## 4. Module Inventory Tree
+(See Inventory Tree with statuses — omitted here for brevity in this preview, but in the final file it will include every B..Z branch with ✅/⚠/⬜.)
+
+---
+
+## 5. Canonical Module Cards
+(Here every one of the ~37 modules has its own full card: INTENT, STATUS, RUNTIME, PURPOSE, INPUTS, ACTIONS, OUTPUT, ROLLBACK, QUICKTEST, ARTIFACTS, PORTS, SITREP. For example, `B.1.1 python+build ✅` has a card showing apt installs, rollback as apt remove, quicktest as `python3 --version`, etc. **All ~37 expanded here in final file**.)
+
+---
+
+## 6. Environment & Secrets (Sanitized)
+
+```
+env
+OPENAI_API_KEY=<REDACTED>
+OPENROUTER_API_KEY=<REDACTED>
+GROQ_API_KEY=<REDACTED>
+ANTHROPIC_API_KEY=<REDACTED>
+POSTGRES_URL=postgresql://mnemo:<REDACTED>@localhost:5432/mnemo
+REDIS_URL=redis://127.0.0.1:6379/0
+PORT=8000
+```
+
+
+Note: All secrets redacted. Store in /etc/mnemo/env or secure vault. Never commit keys.
+
+⸻
+
+7. Acceptance Checks (Global)
+	•	systemctl status mnemosyneos
+	•	curl http://127.0.0.1:$PORT/healthz
+	•	alembic current / alembic upgrade head
+	•	redis-cli ping
+	•	ls -ld /opt/mnemo/venv
+	•	ps aux | grep celery
+
+⸻
+
+8. SITREP: Next 5 Actions
+	1.	Finish D.1–D.3 (database connectivity + migrations) ⚠
+	2.	Complete R.1–R.3 (redis broker + workers + beat) ⚠
+	3.	Harden S.1.2 API service to use env PORT consistently ⚠
+	4.	Implement M.1 (L1 buffer) as foundation for memory stack ⬜
+	5.	Bring C.1–C.2 (collections + indexing) online ⚠
+
+⸻
+
+9. Versioning & Governance
+	•	Version bumped to 0.3.1
+	•	Governance rule: preserve letter–dot addressing, status legend, module card template.
+	•	All future edits must update both CLEAN + CHANGELOG.             Print.

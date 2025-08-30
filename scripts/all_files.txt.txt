@@ -1,0 +1,1496 @@
+FILES
+
+```
+pyproject.toml
+[project]
+name = "mnemosyneos"
+version = "0.2.0"
+description = "Level-5 reflective, self-healing, persistent memory service"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.dependencies]
+fastapi = "^0.115.0"
+uvicorn = {version="^0.30.0", extras=["standard"]}
+gunicorn = "^22.0.0"
+sqlalchemy = "^2.0.32"
+psycopg = {version="^3.2.1", extras=["binary"]}
+pgvector = "^0.3.3"
+alembic = "^1.13.2"
+redis = "^5.0.7"
+celery = "^5.4.0"
+pydantic = "^2.8.2"
+pydantic-settings = "^2.4.0"
+structlog = "^24.1.0"
+orjson = "^3.10.7"
+prometheus-client = "^0.20.0"
+opentelemetry-sdk = "^1.26.0"
+opentelemetry-instrumentation-fastapi = "^0.47b0"
+opentelemetry-exporter-otlp = "^1.26.0"
+httpx = "^0.27.2"
+cryptography = "^43.0.1"
+python-dotenv = "^1.0.1"
+tenacity = "^9.0.0"
+hypothesis = "^6.112.1"
+pytest = "^8.3.2"
+faker = "^28.0.0"
+anyio = "^4.4.0"
+tqdm = "^4.66.4"
+```
+
+```
+deploy/env.example
+# FastAPI
+API_KEYS=dev-key-123,another-key
+MAX_REQUEST_BYTES=1048576
+
+# DB / Redis (local services)
+DATABASE_URL=postgresql+psycopg://mnemo:mnemo@127.0.0.1:5432/mnemo
+REDIS_URL=redis://127.0.0.1:6379/0
+
+# LLM
+LLM_PROVIDER=openai
+OPENAI_API_KEY=replace-me
+ANTHROPIC_API_KEY=
+
+# Embeddings (1536 dims -> text-embedding-3-small)
+EMBED_MODEL=text-embedding-3-small
+
+# Backups
+BACKUP_BACKEND=local
+BACKUP_DIR=/var/lib/mnemo/snapshots
+BACKUP_KEY_FILE=/etc/mnemo/backup.key  # create & chmod 0400
+S3_BUCKET=
+S3_PREFIX=
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=
+
+# Alembic
+AUTO_MIGRATE=1
+
+# Observability (optional)
+OTEL_EXPORTER_OTLP_ENDPOINT=
+```
+
+```
+deploy/mnemosyneos.service
+[Unit]
+Description=Mnemosyne API (Gunicorn/FastAPI)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=notify
+User=mnemo
+Group=mnemo
+EnvironmentFile=/etc/mnemo/env
+WorkingDirectory=/opt/mnemo
+ExecStart=/opt/mnemo/venv/bin/gunicorn --factory --workers=%{%nproc%} \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:8000 src.main:create_app
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```
+deploy/mnemo-worker.service
+[Unit]
+Description=Mnemosyne Celery Workers
+After=network.target redis-server.service postgresql.service
+Wants=redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=mnemo
+Group=mnemo
+EnvironmentFile=/etc/mnemo/env
+WorkingDirectory=/opt/mnemo
+ExecStart=/opt/mnemo/venv/bin/celery -A src.jobs.celery_app:app worker \
+  --loglevel=INFO --concurrency=4 -Q ingest,reflect,compress,rebuild
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```
+deploy/mnemo-beat.service
+[Unit]
+Description=Mnemosyne Celery Beat
+After=network.target redis-server.service
+Wants=redis-server.service
+
+[Service]
+Type=simple
+User=mnemo
+Group=mnemo
+EnvironmentFile=/etc/mnemo/env
+WorkingDirectory=/opt/mnemo
+ExecStart=/opt/mnemo/venv/bin/celery -A src.jobs.celery_app:app beat --loglevel=INFO
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```
+scripts/venv.sh
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.."; pwd)"
+cd "$ROOT"
+
+python3 -m venv "$ROOT/venv"
+source "$ROOT/venv/bin/activate"
+pip install --upgrade pip setuptools wheel
+pip install -e .
+```
+
+```
+scripts/provision_ubuntu.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Base deps (Ubuntu 22.04+)
+sudo apt-get update
+sudo apt-get install -y python3.11 python3.11-venv python3-pip \
+  postgresql postgresql-contrib redis-server \
+  build-essential curl ca-certificates pkg-config
+
+# Create service user & directories
+sudo useradd -r -m -d /opt/mnemo -s /usr/sbin/nologin mnemo || true
+sudo mkdir -p /opt/mnemo /var/lib/mnemo/snapshots /etc/mnemo
+sudo chown -R mnemo:mnemo /opt/mnemo /var/lib/mnemo
+sudo chmod 700 /var/lib/mnemo/snapshots
+
+echo "Remember to place backup key at /etc/mnemo/backup.key and 'chmod 400' it."
+```
+
+```
+scripts/install_systemd.sh
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.."; pwd)"
+
+sudo cp "$ROOT/deploy/mnemosyneos.service" /etc/systemd/system/
+sudo cp "$ROOT/deploy/mnemo-worker.service" /etc/systemd/system/
+sudo cp "$ROOT/deploy/mnemo-beat.service"   /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable mnemosyneos mnemo-worker mnemo-beat
+echo "systemd units installed. Use: sudo systemctl start mnemosyneos mnemo-worker mnemo-beat"
+```
+
+```
+scripts/db_setup.sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+DBUSER="mnemo"
+DBPASS="mnemo"
+DBNAME="mnemo"
+
+sudo -u postgres psql -v ON_ERROR_STOP=1 <<SQL
+DO
+\$do\$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '${DBUSER}') THEN
+      CREATE ROLE ${DBUSER} LOGIN PASSWORD '${DBPASS}';
+   END IF;
+END
+\$do\$;
+
+CREATE DATABASE ${DBNAME} OWNER ${DBUSER};
+GRANT ALL PRIVILEGES ON DATABASE ${DBNAME} TO ${DBUSER};
+\c ${DBNAME}
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+SQL
+
+echo "Postgres ready with pgvector and pg_trgm."
+```
+
+```
+Makefile
+.PHONY: venv serve worker beat migrate test fmt seed bench enable-services start stop logs
+
+venv:
+	./scripts/venv.sh
+
+serve:
+	venv/bin/gunicorn --factory -w `python -c 'import os,psutil; print(max(2, os.cpu_count()//2))'` \
+		-k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 src.main:create_app
+
+worker:
+	venv/bin/celery -A src.jobs.celery_app:app worker --loglevel=INFO --concurrency=4 -Q ingest,reflect,compress,rebuild
+
+beat:
+	venv/bin/celery -A src.jobs.celery_app:app beat --loglevel=INFO
+
+migrate:
+	venv/bin/alembic upgrade head
+
+test:
+	venv/bin/pytest -q
+
+seed:
+	venv/bin/python scripts/load_seed.py
+
+bench:
+	venv/bin/python scripts/bench.py
+
+enable-services:
+	sudo ./scripts/install_systemd.sh
+
+start:
+	sudo systemctl start mnemosyneos mnemo-worker mnemo-beat
+
+stop:
+	sudo systemctl stop mnemosyneos mnemo-worker mnemo-beat
+
+logs:
+	sudo journalctl -u mnemosyneos -u mnemo-worker -u mnemo-beat -f
+```
+
+```
+src/db/session.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from contextlib import contextmanager
+from ..utils.settings import settings
+
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=20,
+)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+def session_context():
+    """Manual context manager for scripts/tasks."""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+def get_db():
+    """FastAPI dependency – yields a session and ensures commit/rollback/close."""
+    db = SessionLocal()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+```
+
+```
+src/core/healing.py
+import logging
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from ..db.vector_index import ensure_indexes
+from .journal import verify_checksums
+from ..utils.snapshots import restore_latest_if_needed
+
+log = logging.getLogger(__name__)
+
+def check_index(db: Session) -> bool:
+    """Return True if expected indexes exist; avoid dimension‑dependent probes."""
+    try:
+        res = db.execute(
+            text("SELECT to_regclass('public.idx_memories_embedding_hnsw') IS NOT NULL")
+        ).scalar()
+        fts = db.execute(
+            text("SELECT to_regclass('public.idx_memories_tsv') IS NOT NULL")
+        ).scalar()
+        return bool(res) and bool(fts)
+    except Exception as e:
+        log.error("Index check failure", error=str(e))
+        return False
+
+def rebuild_index(db: Session):
+    ensure_indexes(db.connection())
+
+def self_heal_on_boot(db: Session):
+    ok = verify_checksums(db)
+    if not ok:
+        log.error("Journal checksum verification failed; attempting snapshot restore")
+        restore_latest_if_needed(db)
+    if not check_index(db):
+        log.warning("Rebuilding vector/FTS indexes")
+        rebuild_index(db)
+```
+
+```
+src/core/recall.py
+import time
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from ..llm.policy import hybrid_score
+from ..utils.metrics import recall_latency_ms
+
+def _semantic(db: Session, query_vec: list[float], k: int):
+    sql = text("""
+      SELECT id, content, metadata, (embedding <=> :q) AS dist
+      FROM memories
+      ORDER BY embedding <=> :q
+      LIMIT :k
+    """)
+    rows = db.execute(sql, {"q": query_vec, "k": k}).mappings().all()
+    out = []
+    for r in rows:
+        # cosine distance is [0, 2]; map to similarity [0,1]
+        d = float(r["dist"])
+        vscore = 1.0 - min(max(d / 2.0, 0.0), 1.0)
+        out.append({"id": r["id"], "content": r["content"], "metadata": r["metadata"], "vscore": vscore})
+    return out
+
+def _keyword(db: Session, query: str, k: int):
+    sql = text("""
+      SELECT id, content, metadata, ts_rank_cd(tsv, plainto_tsquery('english', :q)) AS ts
+      FROM memories
+      WHERE tsv @@ plainto_tsquery('english', :q)
+      ORDER BY ts DESC
+      LIMIT :k
+    """)
+    rows = db.execute(sql, {"q": query, "k": k}).mappings().all()
+    return [{"id": r["id"], "content": r["content"], "metadata": r["metadata"], "tscore": float(r["ts"])} for r in rows]
+
+async def recall(db: Session, query: str, embedder, k: int = 5):
+    t0 = time.perf_counter()
+    qvec = (await embedder.embed([query]))[0]
+    sem = _semantic(db, qvec, k * 3)
+    kw = _keyword(db, query, k * 3)
+
+    by_id: dict = {}
+    for r in sem:
+        by_id.setdefault(r["id"], {}).update(r)
+    for r in kw:
+        by_id.setdefault(r["id"], {}).update(r)
+
+    rescored = []
+    for mid, r in by_id.items():
+        v = float(r.get("vscore", 0.0))
+        t = float(r.get("tscore", 0.0))
+        rescored.append({**r, "id": mid, "score": hybrid_score(v, t)})
+
+    rescored.sort(key=lambda x: x["score"], reverse=True)
+    out = rescored[:k]
+    recall_latency_ms.observe((time.perf_counter() - t0) * 1000.0)
+    return out
+```
+
+```
+src/jobs/celery_app.py
+from celery import Celery
+from ..utils.settings import settings
+from .beat_schedule import CELERY_BEAT_SCHEDULE
+
+app = Celery(
+    "mnemo",
+    broker=settings.redis_url,
+    backend=settings.redis_url,
+    include=["src.jobs.tasks"],
+)
+app.conf.update(
+    task_acks_late=True,
+    worker_prefetch_multiplier=4,
+    task_default_queue="ingest",
+    task_routes={
+        "tasks.reflect": {"queue": "reflect"},
+        "tasks.compress": {"queue": "compress"},
+        "tasks.rebuild": {"queue": "rebuild"},
+    },
+    result_expires=3600,
+    broker_connection_retry_on_startup=True,
+    task_time_limit=120,
+    beat_schedule=CELERY_BEAT_SCHEDULE,  # <— no RedBeat
+)
+```
+
+```
+src/jobs/tasks.py
+from .celery_app import app
+from ..db.session import SessionLocal
+from ..core.reflect import run_reflection
+from ..core.compress import compress_clusters
+from ..db.models import Memory
+from sqlalchemy import select
+
+def _db():
+    return SessionLocal()
+
+@app.task(name="tasks.reflect", max_retries=5, autoretry_for=(Exception,), retry_backoff=2)
+def reflect():
+    from anyio import run
+    with _db() as db:
+        run(lambda: run_reflection(db))
+
+@app.task(name="tasks.compress", max_retries=5, autoretry_for=(Exception,), retry_backoff=2)
+def compress():
+    from anyio import run
+    with _db() as db:
+        rows = db.execute(select(Memory.id).limit(1000)).all()
+        ids = [str(r[0]) for r in rows]
+        clusters = [ids[i:i+5] for i in range(0, len(ids), 5)]
+        run(lambda: compress_clusters(db, clusters))
+
+@app.task(name="tasks.rebuild")
+def rebuild():
+    from ..core.healing import rebuild_index
+    with _db() as db:
+        rebuild_index(db)
+```
+
+```
+src/api/deps.py
+from fastapi import Depends, Request
+from ..utils.security import require_api_key, enforce_max_size
+from ..db.session import get_db
+from sqlalchemy.orm import Session
+
+def auth_dep(authorization: str = Depends(require_api_key)):
+    return True
+
+async def size_limit_dep(request: Request):
+    await enforce_max_size(request)
+
+# Usage in routes: db: Session = Depends(get_db)
+```
+
+```
+src/api/routes_memory.py
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+from .deps import auth_dep, size_limit_dep
+from ..db.session import get_db
+from .schemas import RememberIn, MemoryOut, RecallOut
+from ..core.ingest import remember
+from ..core.recall import recall
+from ..llm.provider import Embeddings
+from ..core.journal import append_event
+from sqlalchemy import select
+from ..db.models import JournalEntry
+
+router = APIRouter(prefix="", tags=["memory"])
+
+@router.post("/remember", response_model=MemoryOut, dependencies=[Depends(auth_dep), Depends(size_limit_dep)])
+async def post_remember(body: RememberIn, db: Session = Depends(get_db)):
+    m = await remember(db, body.source_id, body.content, body.metadata)
+    append_event(db, "remember", {"source_id": body.source_id, "metadata": body.metadata, "id": str(m.id)}, memory_id=m.id)
+    return MemoryOut(id=str(m.id), content=m.content, metadata=m.metadata)
+
+@router.get("/recall", response_model=list[RecallOut], dependencies=[Depends(auth_dep)])
+async def get_recall(query: str = Query(...), k: int = Query(5, ge=1, le=50), db: Session = Depends(get_db)):
+    results = await recall(db, query, embedder=Embeddings(), k=k)
+    return [RecallOut(id=str(r["id"]), content=r["content"], metadata=r["metadata"], score=r["score"]) for r in results]
+
+@router.get("/provenance/{memory_id}", dependencies=[Depends(auth_dep)])
+def provenance(memory_id: str, db: Session = Depends(get_db)):
+    q = select(JournalEntry).where(JournalEntry.memory_id == memory_id).order_by(JournalEntry.created_at)
+    out = []
+    for j in db.execute(q).scalars():
+        out.append({"id": str(j.id), "event_type": j.event_type, "payload": j.payload, "checksum": j.checksum, "created_at": j.created_at.isoformat()})
+    return out
+```
+
+```
+src/api/routes_ops.py
+from fastapi import APIRouter, Depends, Body, HTTPException
+from sqlalchemy.orm import Session
+from .deps import auth_dep
+from ..db.session import get_db
+from .schemas import ClusterIn, BackupOut
+from ..core.compress import compress_clusters
+from ..core.reflect import run_reflection
+from ..utils.snapshots import backup_now, restore
+from ..utils.settings import settings
+from pathlib import Path
+
+router = APIRouter(prefix="", tags=["ops"])
+
+@router.post("/compress", response_model=dict, dependencies=[Depends(auth_dep)])
+async def post_compress(body: ClusterIn, db: Session = Depends(get_db)):
+    await compress_clusters(db, body.clusters)
+    return {"status": "ok"}
+
+@router.post("/reflect", response_model=dict, dependencies=[Depends(auth_dep)])
+async def post_reflect(db: Session = Depends(get_db)):
+    await run_reflection(db)
+    return {"status": "ok"}
+
+@router.post("/backup", response_model=BackupOut, dependencies=[Depends(auth_dep)])
+def post_backup(kind: str = Body(default="full")):
+    path = backup_now(kind)
+    return BackupOut(path=path)
+
+@router.post("/restore", response_model=dict, dependencies=[Depends(auth_dep)])
+def post_restore(path: str = Body(...)):
+    p = Path(path).resolve()
+    base = Path(settings.backup_dir).resolve()
+    if not str(p).endswith(".enc") or base not in p.parents:
+        raise HTTPException(status_code=400, detail="Invalid snapshot path")
+    restore(str(p))
+    return {"status": "ok", "path": str(p)}
+```
+
+```
+src/api/routes_health.py
+from fastapi import APIRouter, Response, HTTPException
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from ..utils.settings import settings
+from ..db.session import SessionLocal
+from sqlalchemy import text
+import redis
+
+router = APIRouter(prefix="", tags=["health"])
+
+@router.get("/healthz")
+def healthz():
+    return {"ok": True}
+
+@router.get("/readyz")
+def readyz():
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+        redis.from_url(settings.redis_url).ping()
+        return {"ready": True}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+@router.get("/metrics")
+def metrics():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+```
+
+```
+src/main.py
+from fastapi import FastAPI
+from .utils.logging import configure_logging
+from .utils.settings import settings
+from .db.automigrate import run_migrations
+from .db.session import SessionLocal
+from .db.vector_index import ensure_indexes
+from .api.routes_memory import router as memory_router
+from .api.routes_ops import router as ops_router
+from .api.routes_health import router as health_router
+from .core.healing import self_heal_on_boot
+
+# Optional: simple OTel setup if endpoint provided
+try:
+    if settings.otel_exporter_otlp_endpoint:
+        from opentelemetry import trace
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+        provider = TracerProvider(resource=Resource.create({"service.name": "hippocampus"}))
+        provider.add_span_processor(BatchSpanProcessor(
+            OTLPSpanExporter(endpoint=settings.otel_exporter_otlp_endpoint)
+        ))
+        trace.set_tracer_provider(provider)
+except Exception:
+    # keep app boot resilient even if OTel wiring fails
+    pass
+
+def create_app():
+    log = configure_logging()
+    app = FastAPI(title="Hippocampus", version="0.2.0")
+
+    # Migrations + index + healing
+    run_migrations()
+    with SessionLocal() as db:
+        ensure_indexes(db.connection())
+        self_heal_on_boot(db)
+
+    app.include_router(health_router)
+    app.include_router(memory_router)
+    app.include_router(ops_router)
+    return app
+
+# Export app for non-factory runners (e.g., uvicorn src.main:app)
+app = create_app()
+```
+
+```
+scripts/snapshot.py
+import sys, subprocess, datetime, pathlib, os
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from src.utils.settings import settings
+
+SNAPDIR = pathlib.Path(settings.backup_dir)
+SNAPDIR.mkdir(parents=True, exist_ok=True)
+
+def load_key() -> bytes:
+    with open(settings.backup_key_file, "rb") as f:
+        master = f.read().strip()
+    hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"mnemo-snapshot")
+    return hkdf.derive(master)
+
+def dump_db() -> pathlib.Path:
+    ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    raw = SNAPDIR / f"dump-{ts}.sql"
+    subprocess.check_call(["pg_dump", settings.database_url, "-f", str(raw)])
+    return raw
+
+def encrypt_file(path: pathlib.Path) -> pathlib.Path:
+    key = load_key()
+    aes = AESGCM(key)
+    nonce = os.urandom(12)
+    ct = aes.encrypt(nonce, path.read_bytes(), None)
+    out = path.with_suffix(path.suffix + ".enc")
+    out.write_bytes(nonce + ct)
+    path.unlink(missing_ok=True)
+    return out
+
+def decrypt_file(path: pathlib.Path) -> pathlib.Path:
+    key = load_key()
+    aes = AESGCM(key)
+    data = path.read_bytes()
+    nonce, ct = data[:12], data[12:]
+    pt = aes.decrypt(nonce, ct, None)
+    out = path.with_suffix("")
+    out.write_bytes(pt)
+    return out
+
+def restore_db(sqlfile: pathlib.Path):
+    subprocess.check_call(["psql", settings.database_url, "-f", str(sqlfile)])
+
+def main():
+    if len(sys.argv) < 2:
+        print("usage: snapshot.py backup|restore [arg]", file=sys.stderr); sys.exit(1)
+    cmd = sys.argv[1]
+    if cmd == "backup":
+        dump = dump_db()
+        enc = encrypt_file(dump)
+        print(str(enc))
+    elif cmd == "restore":
+        path = pathlib.Path(sys.argv[2])
+        sql = decrypt_file(path)
+        restore_db(sql)
+        sql.unlink(missing_ok=True)
+        print("restored")
+    else:
+        print("unknown command", file=sys.stderr); sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+```
+src/utils/settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+from typing import List, Optional
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    api_keys: List[str] = Field(default=["dev-key-123"], alias="API_KEYS")
+    max_request_bytes: int = Field(default=1_048_576, alias="MAX_REQUEST_BYTES")
+
+    database_url: str = Field(alias="DATABASE_URL")
+    redis_url: str = Field(alias="REDIS_URL")
+
+    llm_provider: str = Field(default="openai", alias="LLM_PROVIDER")
+    openai_api_key: Optional[str] = Field(default=None, alias="OPENAI_API_KEY")
+    anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
+    embed_model: str = Field(default="text-embedding-3-small", alias="EMBED_MODEL")
+
+    backup_backend: str = Field(default="local", alias="BACKUP_BACKEND")
+    backup_dir: str = Field(default="/var/lib/mnemo/snapshots", alias="BACKUP_DIR")
+    s3_bucket: Optional[str] = Field(default=None, alias="S3_BUCKET")
+    s3_prefix: Optional[str] = Field(default=None, alias="S3_PREFIX")
+    aws_access_key_id: Optional[str] = Field(default=None, alias="AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: Optional[str] = Field(default=None, alias="AWS_SECRET_ACCESS_KEY")
+    aws_region: Optional[str] = Field(default=None, alias="AWS_REGION")
+    backup_key_file: str = Field(default="/etc/mnemo/backup.key", alias="BACKUP_KEY_FILE")
+
+    auto_migrate: int = Field(default=1, alias="AUTO_MIGRATE")
+
+    # Observability
+    otel_exporter_otlp_endpoint: Optional[str] = Field(default=None, alias="OTEL_EXPORTER_OTLP_ENDPOINT")
+
+settings = Settings()
+```
+
+```
+src/utils/security.py
+from fastapi import Header, HTTPException, status, Request
+from .settings import settings
+
+def require_api_key(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1]
+    if token not in settings.api_keys:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid API key")
+
+async def enforce_max_size(request: Request):
+    cl = request.headers.get("content-length")
+    if cl and int(cl) > settings.max_request_bytes:
+        raise HTTPException(status_code=413, detail="Payload too large")
+```
+
+```
+src/utils/redaction.py
+import re
+
+EMAIL = re.compile(r"([A-Za-z0-9._%+-]+)@([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+PHONE = re.compile(r"\+?\d[\d\-\s]{8,}\d")
+SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+
+def redact(text: str) -> str:
+    """Best-effort PII redaction for email/phone/SSN."""
+    text = EMAIL.sub("[redacted@email]", text)
+    text = PHONE.sub("[redacted:phone]", text)
+    text = SSN.sub("[redacted:ssn]", text)
+    return text
+```
+
+```
+src/utils/hashing.py
+import hashlib, json
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+def sha256_json(obj) -> str:
+    return sha256_bytes(json.dumps(obj, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+def stable_hash_text(text: str) -> str:
+    return hashlib.sha256(text.strip().encode()).hexdigest()
+```
+
+```
+src/utils/logging.py
+import structlog, logging, sys
+
+def configure_logging():
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer(),
+        ],
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+    )
+    return structlog.get_logger()
+```
+
+```
+src/utils/metrics.py
+from prometheus_client import Counter, Histogram
+
+recall_latency_ms = Histogram(
+    "recall_latency_ms", "Recall latency (ms)", buckets=(1,5,10,20,30,40,50,75,100,200)
+)
+ingest_counter = Counter("ingest_total", "Memories ingested")
+reflect_counter = Counter("reflect_total", "Reflection runs")
+compress_counter = Counter("compress_total", "Compression runs")
+```
+
+```
+src/db/base.py
+from sqlalchemy.orm import DeclarativeBase
+
+class Base(DeclarativeBase):
+    pass
+```
+
+```
+src/db/models.py
+import uuid, datetime as dt
+from sqlalchemy import Column, DateTime, String, Index, Float, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from pgvector.sqlalchemy import Vector
+from .base import Base
+
+class Memory(Base):
+    __tablename__ = "memories"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    source_id: Mapped[str] = mapped_column(String(255), index=True)
+    content: Mapped[str] = mapped_column(String)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536))
+    keywords: Mapped[str | None] = mapped_column(String, nullable=True)  # reserved
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow)
+
+    journal_entries = relationship("JournalEntry", back_populates="memory")
+
+    __table_args__ = (
+        Index("ix_memories_source_hash", "source_id", "content_hash", unique=True),
+    )
+
+class JournalEntry(Base):
+    __tablename__ = "journal"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    memory_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("memories.id"), nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSONB)
+    checksum: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow)
+
+    memory = relationship("Memory", back_populates="journal_entries")
+    __table_args__ = (Index("ix_journal_created", "created_at"),)
+
+class Belief(Base):
+    __tablename__ = "beliefs"
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    subject: Mapped[str] = mapped_column(String(256), index=True)
+    predicate: Mapped[str] = mapped_column(String(128), index=True)
+    object: Mapped[str] = mapped_column(String(512))
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    source_id: Mapped[str] = mapped_column(String(255))
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=dt.datetime.utcnow, onupdate=dt.datetime.utcnow)
+
+    __table_args__ = (Index("ix_belief_spo", "subject", "predicate", "object", unique=False),)
+```
+
+```
+src/db/vector_index.py
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+
+CREATE_HNSW = """
+CREATE INDEX IF NOT EXISTS idx_memories_embedding_hnsw
+ON memories USING hnsw (embedding vector_cosine_ops)
+WITH (m=16, ef_construction=128);
+"""
+
+CREATE_FTS = """
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_attribute
+        WHERE attrelid = 'memories'::regclass AND attname = 'tsv') THEN
+        ALTER TABLE memories ADD COLUMN tsv tsvector
+            GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+    END IF;
+END$$;
+CREATE INDEX IF NOT EXISTS idx_memories_tsv ON memories USING GIN (tsv);
+"""
+
+def ensure_indexes(conn: Connection):
+    conn.execute(text(CREATE_HNSW))
+    conn.execute(text(CREATE_FTS))
+
+def set_ivfflat_probes(conn: Connection, probes: int = 8):
+    conn.execute(text(f"SET ivfflat.probes={probes};"))
+```
+
+```
+src/db/automigrate.py
+import subprocess
+from ..utils.settings import settings
+
+def run_migrations():
+    if str(settings.auto_migrate) != "1":
+        return
+    subprocess.check_call(["alembic", "upgrade", "head"])
+```
+
+```
+migrations/env.py
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config, pool
+from alembic import context
+from src.db.base import Base
+from src.db import models  # noqa: F401
+from src.utils.settings import settings
+
+config = context.config
+fileConfig(config.config_file_name)
+
+def run_migrations_offline():
+    context.configure(
+        url=settings.database_url,
+        target_metadata=Base.metadata,
+        literal_binds=True,
+        dialect_opts={"paramstyle": "named"},
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+def run_migrations_online():
+    connectable = engine_from_config(
+        {"sqlalchemy.url": settings.database_url},
+        prefix="sqlalchemy.",
+        poolclass=pool.NullPool,
+    )
+    with connectable.connect() as connection:
+        context.configure(connection=connection, target_metadata=Base.metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()
+```
+
+```
+migrations/versions/0001_initial.py
+from alembic import op
+import sqlalchemy as sa
+from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects import postgresql
+
+revision = "0001_initial"
+down_revision = None
+
+def upgrade():
+    op.create_table(
+        "memories",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("source_id", sa.String(255), nullable=False),
+        sa.Column("content", sa.String(), nullable=False),
+        sa.Column("content_hash", sa.String(64), nullable=False),
+        sa.Column("metadata", postgresql.JSONB, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("embedding", Vector(1536)),
+        sa.Column("keywords", sa.String(), nullable=True),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
+    )
+    op.create_index("ix_memories_source_hash", "memories", ["source_id", "content_hash"], unique=True)
+    # FTS column + index
+    op.execute("""
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_attribute
+            WHERE attrelid = 'memories'::regclass AND attname = 'tsv') THEN
+            ALTER TABLE memories ADD COLUMN tsv tsvector
+                GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+        END IF;
+    END$$;
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS idx_memories_tsv ON memories USING GIN (tsv);")
+
+    op.create_table(
+        "journal",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("memory_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("memories.id"), nullable=True),
+        sa.Column("event_type", sa.String(64), nullable=False),
+        sa.Column("payload", postgresql.JSONB, nullable=False),
+        sa.Column("checksum", sa.String(64), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
+    )
+    op.create_index("ix_journal_created", "journal", ["created_at"])
+
+    op.create_table(
+        "beliefs",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column("subject", sa.String(256), nullable=False),
+        sa.Column("predicate", sa.String(128), nullable=False),
+        sa.Column("object", sa.String(512), nullable=False),
+        sa.Column("confidence", sa.Float(), server_default="0.5"),
+        sa.Column("source_id", sa.String(255), nullable=False),
+        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
+    )
+    op.create_index("ix_belief_spo", "beliefs", ["subject", "predicate", "object"], unique=False)
+
+def downgrade():
+    op.drop_table("beliefs")
+    op.drop_table("journal")
+    op.drop_table("memories")
+```
+
+```
+alembic.ini
+[alembic]
+script_location = migrations
+sqlalchemy.url = postgresql+psycopg://mnemo:mnemo@127.0.0.1:5432/mnemo
+
+[loggers]
+keys = root,sqlalchemy,alembic
+
+[handlers]
+keys = console
+
+[formatters]
+keys = generic
+
+[logger_root]
+level = WARN
+handlers = console
+
+[logger_sqlalchemy]
+level = WARN
+handlers =
+qualname = sqlalchemy.engine
+
+[logger_alembic]
+level = INFO
+handlers =
+qualname = alembic
+
+[handler_console]
+class = StreamHandler
+args = (sys.stdout,)
+level = NOTSET
+formatter = generic
+
+[formatter_generic]
+format = %(levelname)-5.5s [%(name)s] %(message)s
+```
+
+```
+src/llm/provider.py
+import httpx
+from ..utils.settings import settings
+
+class Embeddings:
+    dim = 1536
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        provider = settings.llm_provider.lower()
+        if provider == "openai":
+            return await self._openai_embed(texts)
+        elif provider == "anthropic":
+            # Fall back to OpenAI for embeddings if Anthropic selected
+            return await self._openai_embed(texts)
+        raise RuntimeError("Unknown LLM provider")
+
+    async def _openai_embed(self, texts: list[str]) -> list[list[float]]:
+        url = "https://api.openai.com/v1/embeddings"
+        headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(url, headers=headers, json={"model": settings.embed_model, "input": texts})
+            r.raise_for_status()
+            data = r.json()["data"]
+            return [d["embedding"] for d in data]
+
+class LLM:
+    async def summarize_cluster(self, docs: list[str]) -> str:
+        prompt = "Summarize the following notes into a concise memory episode:\n\n" + "\n- ".join(docs)
+        return await self._chat(prompt)
+
+    async def detect_contradictions(self, facts: list[str]) -> dict:
+        prompt = (
+            "Given these facts, identify contradictions and propose resolutions with confidence:"
+            "\n" + "\n".join(f"- {f}" for f in facts) +
+            "\nReturn JSON with fields contradictions:[{a,b,reason}], updates:[{subject,predicate,object,confidence}]"
+        )
+        txt = await self._chat(prompt)
+        try:
+            import json
+            return json.loads(txt)
+        except Exception:
+            return {"contradictions": [], "updates": []}
+
+    async def _chat(self, prompt: str) -> str:
+        provider = settings.llm_provider.lower()
+        if provider == "openai":
+            url = "https://api.openai.com/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {settings.openai_api_key}"}
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [{"role": "system", "content": "You are a careful reasoning assistant."},
+                             {"role": "user", "content": prompt}],
+                "temperature": 0
+            }
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(url, headers=headers, json=payload)
+                r.raise_for_status()
+                return r.json()["choices"][0]["message"]["content"]
+        elif provider == "anthropic":
+            url = "https://api.anthropic.com/v1/messages"
+            headers = {"x-api-key": settings.anthropic_api_key, "anthropic-version": "2023-06-01"}
+            payload = {"model": "claude-3-5-sonnet-20240620", "max_tokens": 800, "messages":[{"role":"user","content": prompt}]}
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                r = await client.post(url, headers=headers, json=payload)
+                r.raise_for_status()
+                return r.json()["content"][0]["text"]
+        else:
+            raise RuntimeError("Unknown LLM provider")
+```
+
+```
+src/llm/policy.py
+from dataclasses import dataclass
+
+@dataclass
+class SourceTrust:
+    domain: str
+    weight: float
+
+DEFAULT_TRUST = {"email": 0.6, "calendar": 0.7, "manual": 0.5, "system": 0.8}
+
+def hybrid_score(vector_score: float, text_score: float) -> float:
+    v = min(max(vector_score, 0.0), 1.0)
+    t = min(max(text_score, 0.0), 1.0)
+    return 0.65 * v + 0.35 * t
+```
+
+```
+src/core/journal.py
+from sqlalchemy.orm import Session
+from ..db.models import JournalEntry
+from ..utils.hashing import sha256_json
+
+def append_event(db: Session, event_type: str, payload: dict, memory_id=None):
+    checksum = sha256_json(payload)
+    je = JournalEntry(event_type=event_type, payload=payload, checksum=checksum, memory_id=memory_id)
+    db.add(je)
+    return je
+
+def verify_checksums(db: Session) -> bool:
+    from sqlalchemy import select
+    ok = True
+    for (payload, checksum) in db.execute(select(JournalEntry.payload, JournalEntry.checksum)):
+        if sha256_json(payload) != checksum:
+            ok = False
+            break
+    return ok
+```
+
+```
+src/core/ingest.py
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from ..db.models import Memory
+from ..utils.redaction import redact
+from ..utils.hashing import stable_hash_text
+from ..llm.provider import Embeddings
+from ..utils.metrics import ingest_counter
+
+async def remember(db: Session, source_id: str, content: str, metadata: dict) -> Memory:
+    red = redact(content)
+    chash = stable_hash_text(red + (metadata and str(sorted(metadata.items())) or ""))
+    existing = db.execute(
+        select(Memory).where(Memory.source_id == source_id, Memory.content_hash == chash)
+    ).scalar_one_or_none()
+    if existing:
+        return existing
+    emb = await Embeddings().embed([red])
+    m = Memory(source_id=source_id, content=red, content_hash=chash, metadata=metadata or {}, embedding=emb[0])
+    db.add(m)
+    ingest_counter.inc()
+    return m
+```
+
+```
+src/core/compress.py
+from sqlalchemy.orm import Session
+from ..db.models import Memory
+from ..llm.provider import LLM
+from ..utils.metrics import compress_counter
+
+async def compress_clusters(db: Session, cluster_ids: list[list[str]]):
+    llm = LLM()
+    for cluster in cluster_ids:
+        docs = []
+        for mid in cluster:
+            m = db.get(Memory, mid)
+            if m:
+                docs.append(m.content)
+        if not docs:
+            continue
+        summary = await llm.summarize_cluster(docs)
+        from .ingest import remember
+        await remember(db, source_id="system:compress", content=summary,
+                       metadata={"episode": True, "parents": cluster})
+    compress_counter.inc()
+```
+
+```
+src/core/consistency.py
+from sqlalchemy.orm import Session
+from sqlalchemy import select
+from ..db.models import Belief
+from ..llm.provider import LLM
+from datetime import datetime
+
+def _mk_fact(b: Belief) -> str:
+    return f"{b.subject}::{b.predicate}::{b.object} (conf={b.confidence:.2f})"
+
+async def reflect_beliefs(db: Session):
+    blfs = db.execute(select(Belief).order_by(Belief.updated_at.desc()).limit(200)).scalars().all()
+    facts = [_mk_fact(b) for b in blfs]
+    out = await LLM().detect_contradictions(facts)
+
+    for u in out.get("updates", []):
+        subj, pred, obj = u["subject"], u["predicate"], u["object"]
+        conf = float(u.get("confidence", 0.6))
+        ex = db.execute(select(Belief).where(Belief.subject == subj, Belief.predicate == pred)).scalar_one_or_none()
+        if ex:
+            ex.object, ex.confidence, ex.updated_at = obj, conf, datetime.utcnow()
+        else:
+            db.add(Belief(subject=subj, predicate=pred, object=obj, confidence=conf, source_id="reflect"))
+```
+
+```
+src/core/reflect.py
+from .consistency import reflect_beliefs
+from ..utils.metrics import reflect_counter
+
+async def run_reflection(db):
+    await reflect_beliefs(db)
+    reflect_counter.inc()
+```
+
+```
+src/jobs/beat_schedule.py
+from datetime import timedelta
+
+CELERY_BEAT_SCHEDULE = {
+  "reflect-hourly": {"task": "tasks.reflect", "schedule": timedelta(hours=1)},
+  "compress-nightly": {"task": "tasks.compress", "schedule": timedelta(hours=24)},
+}
+```
+
+```
+src/api/schemas.py
+from pydantic import BaseModel, Field
+from typing import Any, List
+
+class RememberIn(BaseModel):
+    source_id: str = Field(..., max_length=255)
+    content: str
+    metadata: dict = Field(default_factory=dict)
+
+class MemoryOut(BaseModel):
+    id: str
+    content: str
+    metadata: dict
+
+class RecallOut(BaseModel):
+    id: str
+    content: str
+    metadata: dict
+    score: float
+
+class ClusterIn(BaseModel):
+    clusters: List[List[str]]
+
+class BackupOut(BaseModel):
+    path: str
+```
+
+```
+tests/test_contradictions.py
+import pytest
+from src.db.session import SessionLocal
+from src.db.models import Belief
+
+@pytest.mark.asyncio
+async def test_reflection_updates_beliefs(monkeypatch):
+    from src.core.consistency import reflect_beliefs
+    with SessionLocal() as db:
+        db.add(Belief(subject="Sky", predicate="color", object="blue", confidence=0.8, source_id="test"))
+        db.add(Belief(subject="Sky", predicate="color", object="green", confidence=0.7, source_id="test"))
+        db.commit()
+
+        async def fake_detect(facts):
+            return {"updates":[{"subject":"Sky","predicate":"color","object":"blue","confidence":0.95}]}
+        from src.llm import provider
+        monkeypatch.setattr(provider.LLM, "detect_contradictions", lambda self, facts: fake_detect(facts))
+
+        await reflect_beliefs(db)
+        q = db.query(Belief).filter(Belief.subject=="Sky", Belief.predicate=="color").all()
+        assert any(b.object=="blue" and b.confidence>=0.9 for b in q)
+```
+
+```
+tests/test_crash_commit.py
+from src.db.session import SessionLocal
+from src.db.models import Memory
+import pytest
+
+def test_crash_during_commit(monkeypatch):
+    with SessionLocal() as db:
+        db.add(Memory(source_id="x", content="y", content_hash="h", metadata={}, embedding=[0]*1536))
+        def boom(*a, **k): raise RuntimeError("boom")
+        monkeypatch.setattr(db, "commit", boom)
+        with pytest.raises(RuntimeError):
+            db.commit()
+        db.rollback()
+        assert db.query(Memory).count() == 0
+```
+
+```
+tests/test_index_corruption.py
+from sqlalchemy import text
+from src.db.session import SessionLocal
+from src.core.healing import check_index, rebuild_index
+
+def test_partial_index_corruption():
+    with SessionLocal() as db:
+        db.execute(text("DROP INDEX IF EXISTS idx_memories_embedding_hnsw"))
+        ok = check_index(db)
+        assert ok is False
+        rebuild_index(db)
+        assert check_index(db) is True
+```
+
+```
+tests/test_concurrent_writers.py
+import threading
+from src.db.session import SessionLocal
+from src.db.models import Memory
+
+def worker(n):
+    with SessionLocal() as db:
+        db.add(Memory(source_id=f"s{n}", content="c", content_hash=f"h{n}", metadata={}, embedding=[0]*1536))
+
+def test_concurrent_writers():
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(10)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    with SessionLocal() as db:
+        assert db.query(Memory).count() >= 10
+```
+
+```
+tests/test_pii_inputs.py
+from src.utils.redaction import redact
+
+def test_redaction():
+    t = "Call me at 555-555-5555 and email foo@bar.com"
+    r = redact(t)
+    assert "555" not in r and "@bar.com" not in r
+```
+
+```
+scripts/load_seed.py
+import asyncio, httpx, random
+from faker import Faker
+
+fake = Faker()
+
+API_BASE = "http://localhost:8000"
+API_KEY = "dev-key-123"
+
+async def seed(n=100_000):
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    async with httpx.AsyncClient(timeout=10) as client:
+        for i in range(n):
+            content = f"{fake.sentence()} {fake.paragraph()} {fake.company()} {fake.name()}"
+            md = {"tag": random.choice(["work","personal","research"])}
+            r = await client.post(f"{API_BASE}/remember", headers=headers, json={"source_id": f"seed:{i%1000}", "content": content, "metadata": md})
+            if i % 1000 == 0:
+                print("seeded", i)
+    print("done")
+
+if __name__ == "__main__":
+    asyncio.run(seed())
+```
+
+```
+scripts/bench.py
+import asyncio, httpx, time, statistics, random
+
+API_BASE = "http://localhost:8000"
+API_KEY = "dev-key-123"
+
+async def hit(session, q):
+    t0 = time.perf_counter()
+    r = await session.get(f"{API_BASE}/recall", params={"query": q, "k": 5}, headers={"Authorization": f"Bearer {API_KEY}"})
+    r.raise_for_status()
+    return (time.perf_counter() - t0) * 1000.0
+
+async def run_bench(rps=100, duration_s=10):
+    lat = []
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        start = time.perf_counter()
+        while time.perf_counter() - start < duration_s:
+            tasks = []
+            for _ in range(rps):
+                q = random.choice(["project status", "meeting notes", "travel plan", "architecture", "database index"])
+                tasks.append(asyncio.create_task(hit(client, q)))
+            lat += await asyncio.gather(*tasks)
+        p95 = statistics.quantiles(lat, n=100)[94]
+        print(f"count={len(lat)} p95={p95:.2f}ms mean={statistics.mean(lat):.2f}ms")
+    return lat
+
+if __name__ == "__main__":
+    asyncio.run(run_bench())
+```
+
+```
+k6/recall.js
+import http from 'k6/http';
+import { sleep } from 'k6';
+import { Trend } from 'k6/metrics';
+let t = new Trend('recall_latency');
+
+export let options = { vus: 100, duration: '30s' };
+
+export default function () {
+  const url = 'http://localhost:8000/recall?query=project%20notes&k=5';
+  const params = { headers: { Authorization: 'Bearer dev-key-123' } };
+  let res = http.get(url, params);
+  t.add(res.timings.duration);
+  if (res.status !== 200) { console.error(res.status, res.body); }
+  sleep(0.1);
+}
+```
+
+```
+README.md
+# Hippocampus (mnemosyneos)
+
+Level‑5 reflective, self‑healing memory service with fast recall.
+
+## Install (bare metal, Ubuntu/NUC)
+```bash
+./scripts/provision_ubuntu.sh
+./scripts/db_setup.sh
+# put a key at /etc/mnemo/backup.key (chmod 400) and env at /etc/mnemo/env
+sudo -u mnemo ./scripts/venv.sh
+sudo -u mnemo venv/bin/alembic upgrade head
+./scripts/install_systemd.sh
+sudo systemctl start mnemosyneos mnemo-worker mnemo-beat
+
+API
+    •	POST /remember {source_id, content, metadata} → idempotent on (source_id, content_hash)
+    •	GET /recall?query=&k= hybrid (pgvector HNSW cosine + FTS)
+    •	POST /compress {clusters: [[id]]} → summarize episodes via LLM
+    •	POST /reflect → contradiction detection → belief updates
+    •	POST /backup {kind} → AES‑256‑GCM encrypted snapshot
+    •	POST /restore {path} → restore snapshot
+    •	GET /provenance/{memory_id} → journal (append‑only, SHA‑256 verified)
+
+Auth: Authorization: Bearer <API_KEY>
+
+Performance targets
+    •	p95 ≤ 50ms @ k=5, N≈100k with HNSW m=16, ef_construction=128.
+    •	Query rescoring uses cosine distance→similarity normalization.
+
+Self‑healing
+    1.	Verify journal checksums; if mismatch, attempt restore.
+    2.	Validate index presence; rebuild if missing.
+    3.	Ensure FTS column + GIN index exist.
+
+Observability
+    •	/metrics (Prometheus), /healthz, /readyz
+    •	Optional OTLP endpoint via OTEL_EXPORTER_OTLP_ENDPOINT.
+
+Security
+    •	API key auth, size limit, PII redaction, AES‑GCM snapshots with HKDF‑derived key.
+```
