@@ -1,4 +1,3 @@
-```markdown
 # MnemosyneOS
 
 Persistent memory operating system for VPS environments and AI orchestration.
