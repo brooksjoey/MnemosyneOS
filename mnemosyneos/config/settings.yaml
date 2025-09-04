@@ -1,0 +1,5 @@
+# default settings (override via env)
+logging: logging.yaml
+vector_backend: ${VECTOR_BACKEND:-chroma}
+data_dir: ${DATA_DIR:-/var/lib/mnemosyneos}
+vector_dir: ${VECTOR_DIR:-/var/lib/mnemosyneos/vectorstore}

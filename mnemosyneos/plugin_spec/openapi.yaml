@@ -1,0 +1,7 @@
+openapi: 3.0.3
+info: { title: MnemosyneOS Memory API, version: "0.1.0" }
+paths:
+  /healthz: { get: { summary: Health check, responses: { '200': { description: OK }}}}
+  /memories: { post: { summary: Upsert memory item, responses: { '201': { description: Created }}}}
+  /search: { post: { summary: Semantic search, responses: { '200': { description: OK }}}}
+  /namespaces: { get: { summary: List namespaces, responses: { '200': { description: OK }}}}

@@ -1,0 +1,14 @@
+[Unit]
+Description=MnemosyneOS (AI persistent memory service)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/mnemosyneos/.env
+WorkingDirectory=/opt/mnemosyneos
+ExecStart=/usr/bin/python3 services/mnemo/main.py --host ${APP_HOST} --port ${APP_PORT}
+Restart=on-failure
+User=root
+
+[Install]
+WantedBy=multi-user.target

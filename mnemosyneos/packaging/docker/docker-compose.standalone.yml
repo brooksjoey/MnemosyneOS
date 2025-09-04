@@ -1,0 +1,15 @@
+services:
+  mnemo:
+    build:
+      context: .
+    env_file:
+      - ./config/.env.example
+    ports:
+      - "${APP_PORT:-8208}:8208"
+    volumes:
+      - mnemo-data:/var/lib/mnemosyneos
+      - mnemo-logs:/var/log/mnemosyneos
+    restart: unless-stopped
+volumes:
+  mnemo-data:
+  mnemo-logs:
