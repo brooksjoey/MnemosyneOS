@@ -1,0 +1,23 @@
+[Unit]
+Description=MnemosyneOS Memory Service
+After=network.target
+
+[Service]
+Type=simple
+User=mnemo
+Group=mnemo
+Environment=APP_ENV=production
+Environment=LOG_DIR=/var/log/mnemosyneos
+# Uncomment to force a custom log path:
+# Environment=LOG_FILE=/var/log/mnemosyneos/app.log
+WorkingDirectory=/opt/mnemosyneos
+ExecStart=/usr/bin/python3 -m mnemosyneos.services.mnemo.api.server
+Restart=always
+RestartSec=5
+# Make sure logs directory exists and is writable
+ExecStartPre=/usr/bin/mkdir -p /var/log/mnemosyneos
+ExecStartPre=/usr/bin/chown -R mnemo:mnemo /var/log/mnemosyneos
+ExecStartPre=/usr/bin/chmod 0750 /var/log/mnemosyneos
+
+[Install]
+WantedBy=multi-user.target

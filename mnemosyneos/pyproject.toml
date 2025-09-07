@@ -1,0 +1,6 @@
+[project]
+name = "mnemosyneos"
+version = "0.0.0"
+description = "AI persistent memory service (MnemosyneOS/Nemo)"
+requires-python = ">=3.10"
+dependencies = []  # move real deps here or use requirements.txt
